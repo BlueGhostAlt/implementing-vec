@@ -2,6 +2,7 @@
 
 use std::alloc::{alloc, dealloc, realloc, Layout};
 use std::mem;
+use std::ops::{Deref, DerefMut};
 use std::process;
 use std::ptr::{self, Unique};
 
@@ -79,6 +80,19 @@ impl<T> Vec<T> {
 
             unsafe { Some(ptr::read(self.ptr.as_ptr().offset(self.len as isize))) }
         }
+    }
+}
+
+impl<T> Deref for Vec<T> {
+    type Target = [T];
+    fn deref(&self) -> &[T] {
+        unsafe { std::slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
+    }
+}
+
+impl<T> DerefMut for Vec<T> {
+    fn deref_mut(&mut self) -> &mut [T] {
+        unsafe { std::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len) }
     }
 }
 
