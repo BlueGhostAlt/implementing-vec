@@ -1,6 +1,6 @@
 #![feature(ptr_internals)]
 
-use std::alloc::{alloc, realloc, Layout};
+use std::alloc::{alloc, dealloc, realloc, Layout};
 use std::mem;
 use std::process;
 use std::ptr::{self, Unique};
@@ -78,6 +78,24 @@ impl<T> Vec<T> {
             self.len -= 1;
 
             unsafe { Some(ptr::read(self.ptr.as_ptr().offset(self.len as isize))) }
+        }
+    }
+}
+
+impl<T> Drop for Vec<T> {
+    fn drop(&mut self) {
+        if self.cap != 0 {
+            while let Some(_) = self.pop() {}
+
+            let elem_size = mem::size_of::<T>();
+            let align = mem::align_of::<T>();
+            let num_bytes = elem_size * self.cap;
+
+            unsafe {
+                let layout = Layout::from_size_align_unchecked(num_bytes, align);
+
+                dealloc(self.ptr.as_ptr() as *mut _, layout);
+            }
         }
     }
 }
