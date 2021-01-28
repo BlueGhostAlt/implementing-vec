@@ -3,7 +3,7 @@
 use std::alloc::{alloc, realloc, Layout};
 use std::mem;
 use std::process;
-use std::ptr::Unique;
+use std::ptr::{self, Unique};
 
 pub struct Vec<T> {
     ptr: Unique<T>,
@@ -56,6 +56,28 @@ impl<T> Vec<T> {
 
             self.ptr = Unique::new_unchecked(ptr as *mut _);
             self.cap = new_cap;
+        }
+    }
+
+    pub fn push(&mut self, elem: T) {
+        if self.len == self.cap {
+            self.grow();
+        }
+
+        unsafe {
+            ptr::write(self.ptr.as_ptr().offset(self.len as isize), elem);
+        }
+
+        self.len += 1;
+    }
+
+    pub fn pop(&mut self) -> Option<T> {
+        if self.len == 0 {
+            None
+        } else {
+            self.len -= 1;
+
+            unsafe { Some(ptr::read(self.ptr.as_ptr().offset(self.len as isize))) }
         }
     }
 }
