@@ -137,7 +137,7 @@ impl<T> Vec<T> {
         unsafe {
             IntoIter {
                 buf: ptr,
-                cap: cap,
+                cap,
                 start: ptr.as_ptr() as *const _,
                 end: if cap == 0 {
                     ptr.as_ptr() as *const _
@@ -146,6 +146,12 @@ impl<T> Vec<T> {
                 },
             }
         }
+    }
+}
+
+impl<T> Default for Vec<T> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -165,7 +171,7 @@ impl<T> DerefMut for Vec<T> {
 impl<T> Drop for Vec<T> {
     fn drop(&mut self) {
         if self.cap != 0 {
-            while let Some(_) = self.pop() {}
+            while self.pop().is_some() {}
 
             let elem_size = mem::size_of::<T>();
             let align = mem::align_of::<T>();
