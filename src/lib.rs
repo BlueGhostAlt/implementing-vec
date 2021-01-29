@@ -1,6 +1,7 @@
 #![feature(ptr_internals)]
 
 use std::alloc::{alloc, dealloc, realloc, Layout};
+use std::marker::PhantomData;
 use std::mem;
 use std::ops::{Deref, DerefMut};
 use std::process;
@@ -16,10 +17,19 @@ pub struct Vec<T> {
     len: usize,
 }
 
-struct IntoIter<T> {
-    _buf: RawVec<T>,
+struct RawValIter<T> {
     start: *const T,
     end: *const T,
+}
+
+struct IntoIter<T> {
+    _buf: RawVec<T>,
+    iter: RawValIter<T>,
+}
+
+pub struct Drain<'a, T: 'a> {
+    vec: PhantomData<&'a mut Vec<T>>,
+    iter: RawValIter<T>,
 }
 
 impl<T> RawVec<T> {
@@ -151,16 +161,38 @@ impl<T> Vec<T> {
 
     fn into_iter(self) -> IntoIter<T> {
         unsafe {
-            let buf = ptr::read(&self.buf);
-            let len = self.len;
+            let iter = RawValIter::new(&self);
 
+            let buf = ptr::read(&self.buf);
             mem::forget(self);
 
-            IntoIter {
-                start: buf.ptr.as_ptr(),
-                end: buf.ptr.as_ptr().add(len),
-                _buf: buf,
+            IntoIter { iter, _buf: buf }
+        }
+    }
+
+    pub fn drain(&mut self) -> Drain<T> {
+        unsafe {
+            let iter = RawValIter::new(&self);
+
+            self.len = 0;
+
+            Drain {
+                iter,
+                vec: PhantomData,
             }
+        }
+    }
+}
+
+impl<T> RawValIter<T> {
+    unsafe fn new(slice: &[T]) -> Self {
+        RawValIter {
+            start: slice.as_ptr(),
+            end: if slice.len() == 0 {
+                slice.as_ptr()
+            } else {
+                slice.as_ptr().add(slice.len())
+            },
         }
     }
 }
@@ -208,11 +240,17 @@ impl<T> Drop for Vec<T> {
 
 impl<T> Drop for IntoIter<T> {
     fn drop(&mut self) {
-        for _ in &mut *self {}
+        for _ in &mut self.iter {}
     }
 }
 
-impl<T> Iterator for IntoIter<T> {
+impl<'a, T> Drop for Drain<'a, T> {
+    fn drop(&mut self) {
+        for _ in &mut self.iter {}
+    }
+}
+
+impl<T> Iterator for RawValIter<T> {
     type Item = T;
     fn next(&mut self) -> Option<T> {
         if self.start == self.end {
@@ -234,7 +272,7 @@ impl<T> Iterator for IntoIter<T> {
     }
 }
 
-impl<T> DoubleEndedIterator for IntoIter<T> {
+impl<T> DoubleEndedIterator for RawValIter<T> {
     fn next_back(&mut self) -> Option<T> {
         if self.start == self.end {
             None
@@ -246,5 +284,39 @@ impl<T> DoubleEndedIterator for IntoIter<T> {
                 Some(elem)
             }
         }
+    }
+}
+
+impl<T> Iterator for IntoIter<T> {
+    type Item = T;
+    fn next(&mut self) -> Option<T> {
+        self.iter.next()
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.iter.size_hint()
+    }
+}
+
+impl<T> DoubleEndedIterator for IntoIter<T> {
+    fn next_back(&mut self) -> Option<T> {
+        self.iter.next_back()
+    }
+}
+
+impl<'a, T> Iterator for Drain<'a, T> {
+    type Item = T;
+    fn next(&mut self) -> Option<T> {
+        self.iter.next()
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.iter.size_hint()
+    }
+}
+
+impl<'a, T> DoubleEndedIterator for Drain<'a, T> {
+    fn next_back(&mut self) -> Option<T> {
+        self.iter.next_back()
     }
 }
