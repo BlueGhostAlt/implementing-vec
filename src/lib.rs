@@ -73,7 +73,7 @@ impl<T> Vec<T> {
         }
 
         unsafe {
-            ptr::write(self.ptr.as_ptr().offset(self.len as isize), elem);
+            ptr::write(self.ptr.as_ptr().add(self.len), elem);
         }
 
         self.len += 1;
@@ -85,7 +85,7 @@ impl<T> Vec<T> {
         } else {
             self.len -= 1;
 
-            unsafe { Some(ptr::read(self.ptr.as_ptr().offset(self.len as isize))) }
+            unsafe { Some(ptr::read(self.ptr.as_ptr().add(self.len))) }
         }
     }
 
@@ -99,12 +99,12 @@ impl<T> Vec<T> {
         unsafe {
             if index < self.len {
                 ptr::copy(
-                    self.ptr.as_ptr().offset(index as isize),
-                    self.ptr.as_ptr().offset(index as isize + 1),
+                    self.ptr.as_ptr().add(index),
+                    self.ptr.as_ptr().add(index + 1),
                     self.len - index,
                 );
             }
-            ptr::write(self.ptr.as_ptr().offset(index as isize), elem);
+            ptr::write(self.ptr.as_ptr().add(index), elem);
 
             self.len += 1;
         }
@@ -116,10 +116,10 @@ impl<T> Vec<T> {
         unsafe {
             self.len -= 1;
 
-            let result = ptr::read(self.ptr.as_ptr().offset(index as isize));
+            let result = ptr::read(self.ptr.as_ptr().add(index));
             ptr::copy(
-                self.ptr.as_ptr().offset(index as isize + 1),
-                self.ptr.as_ptr().offset(index as isize),
+                self.ptr.as_ptr().add(index + 1),
+                self.ptr.as_ptr().add(index),
                 self.len - index,
             );
 
@@ -142,7 +142,7 @@ impl<T> Vec<T> {
                 end: if cap == 0 {
                     ptr.as_ptr() as *const _
                 } else {
-                    ptr.as_ptr().offset(len as isize)
+                    ptr.as_ptr().add(len)
                 },
             }
         }
