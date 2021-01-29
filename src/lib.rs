@@ -12,6 +12,13 @@ pub struct Vec<T> {
     len: usize,
 }
 
+struct IntoIter<T> {
+    buf: Unique<T>,
+    cap: usize,
+    start: *const T,
+    end: *const T,
+}
+
 impl<T> Vec<T> {
     pub fn new() -> Self {
         assert_ne!(mem::size_of::<T>(), 0, "I'm not ready to handle ZSTs ):");
@@ -119,6 +126,27 @@ impl<T> Vec<T> {
             result
         }
     }
+
+    fn into_iter(self) -> IntoIter<T> {
+        let ptr = self.ptr;
+        let cap = self.cap;
+        let len = self.len;
+
+        mem::forget(self);
+
+        unsafe {
+            IntoIter {
+                buf: ptr,
+                cap: cap,
+                start: ptr.as_ptr() as *const _,
+                end: if cap == 0 {
+                    ptr.as_ptr() as *const _
+                } else {
+                    ptr.as_ptr().offset(len as isize)
+                },
+            }
+        }
+    }
 }
 
 impl<T> Deref for Vec<T> {
@@ -147,6 +175,61 @@ impl<T> Drop for Vec<T> {
                 let layout = Layout::from_size_align_unchecked(num_bytes, align);
 
                 dealloc(self.ptr.as_ptr() as *mut _, layout);
+            }
+        }
+    }
+}
+
+impl<T> Drop for IntoIter<T> {
+    fn drop(&mut self) {
+        if self.cap != 0 {
+            for _ in &mut *self {}
+
+            let elem_size = mem::size_of::<T>();
+            let align = mem::align_of::<T>();
+            let num_bytes = elem_size * self.cap;
+
+            unsafe {
+                let layout = Layout::from_size_align_unchecked(num_bytes, align);
+
+                dealloc(self.buf.as_ptr() as *mut _, layout)
+            }
+        }
+    }
+}
+
+impl<T> Iterator for IntoIter<T> {
+    type Item = T;
+    fn next(&mut self) -> Option<T> {
+        if self.start == self.end {
+            None
+        } else {
+            unsafe {
+                let result = ptr::read(self.start);
+                self.start = self.start.offset(1);
+
+                Some(result)
+            }
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let len = (self.end as usize - self.start as usize) / mem::size_of::<T>();
+
+        (len, Some(len))
+    }
+}
+
+impl<T> DoubleEndedIterator for IntoIter<T> {
+    fn next_back(&mut self) -> Option<T> {
+        if self.start == self.end {
+            None
+        } else {
+            unsafe {
+                self.end = self.end.offset(-1);
+                let elem = ptr::read(self.end);
+
+                Some(elem)
             }
         }
     }
