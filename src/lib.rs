@@ -158,17 +158,6 @@ impl<T> Vec<T> {
         }
     }
 
-    pub fn into_iter(self) -> IntoIter<T> {
-        unsafe {
-            let iter = RawValIter::new(&self);
-
-            let buf = ptr::read(&self.buf);
-            mem::forget(self);
-
-            IntoIter { iter, _buf: buf }
-        }
-    }
-
     pub fn drain(&mut self) -> Drain<T> {
         unsafe {
             let iter = RawValIter::new(&self);
@@ -205,6 +194,21 @@ impl<T> DerefMut for Vec<T> {
 impl<T> Drop for Vec<T> {
     fn drop(&mut self) {
         while self.pop().is_some() {}
+    }
+}
+
+impl<T> IntoIterator for Vec<T> {
+    type Item = T;
+    type IntoIter = IntoIter<T>;
+    fn into_iter(self) -> Self::IntoIter {
+        unsafe {
+            let iter = RawValIter::new(&self);
+
+            let buf = ptr::read(&self.buf);
+            mem::forget(self);
+
+            IntoIter { iter, _buf: buf }
+        }
     }
 }
 
