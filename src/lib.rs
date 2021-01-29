@@ -81,6 +81,44 @@ impl<T> Vec<T> {
             unsafe { Some(ptr::read(self.ptr.as_ptr().offset(self.len as isize))) }
         }
     }
+
+    pub fn insert(&mut self, index: usize, elem: T) {
+        assert!(index <= self.len, "Insertion index is out of bounds!");
+
+        if self.len == self.cap {
+            self.grow();
+        }
+
+        unsafe {
+            if index < self.len {
+                ptr::copy(
+                    self.ptr.as_ptr().offset(index as isize),
+                    self.ptr.as_ptr().offset(index as isize + 1),
+                    self.len - index,
+                );
+            }
+            ptr::write(self.ptr.as_ptr().offset(index as isize), elem);
+
+            self.len += 1;
+        }
+    }
+
+    pub fn remove(&mut self, index: usize) -> T {
+        assert!(index < self.len, "Removal index is out of bounds!");
+
+        unsafe {
+            self.len -= 1;
+
+            let result = ptr::read(self.ptr.as_ptr().offset(index as isize));
+            ptr::copy(
+                self.ptr.as_ptr().offset(index as isize + 1),
+                self.ptr.as_ptr().offset(index as isize),
+                self.len - index,
+            );
+
+            result
+        }
+    }
 }
 
 impl<T> Deref for Vec<T> {
