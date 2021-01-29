@@ -6,26 +6,28 @@ use std::ops::{Deref, DerefMut};
 use std::process;
 use std::ptr::{self, Unique};
 
-pub struct Vec<T> {
+struct RawVec<T> {
     ptr: Unique<T>,
     cap: usize,
+}
+
+pub struct Vec<T> {
+    buf: RawVec<T>,
     len: usize,
 }
 
 struct IntoIter<T> {
-    buf: Unique<T>,
-    cap: usize,
+    _buf: RawVec<T>,
     start: *const T,
     end: *const T,
 }
 
-impl<T> Vec<T> {
-    pub fn new() -> Self {
-        assert_ne!(mem::size_of::<T>(), 0, "I'm not ready to handle ZSTs ):");
+impl<T> RawVec<T> {
+    fn new() -> Self {
+        assert_ne!(mem::size_of::<T>(), 0, "Still not ready to handle ZSTs ):");
 
-        Vec {
+        RawVec {
             ptr: Unique::dangling(),
-            len: 0,
             cap: 0,
         }
     }
@@ -66,14 +68,31 @@ impl<T> Vec<T> {
             self.cap = new_cap;
         }
     }
+}
+
+impl<T> Vec<T> {
+    fn ptr(&self) -> *mut T {
+        self.buf.ptr.as_ptr()
+    }
+
+    fn cap(&self) -> usize {
+        self.buf.cap
+    }
+
+    pub fn new() -> Self {
+        Vec {
+            buf: RawVec::new(),
+            len: 0,
+        }
+    }
 
     pub fn push(&mut self, elem: T) {
-        if self.len == self.cap {
-            self.grow();
+        if self.len == self.cap() {
+            self.buf.grow();
         }
 
         unsafe {
-            ptr::write(self.ptr.as_ptr().add(self.len), elem);
+            ptr::write(self.ptr().add(self.len), elem);
         }
 
         self.len += 1;
@@ -85,26 +104,29 @@ impl<T> Vec<T> {
         } else {
             self.len -= 1;
 
-            unsafe { Some(ptr::read(self.ptr.as_ptr().add(self.len))) }
+            unsafe {
+                let elem = ptr::read(self.ptr().add(self.len));
+                Some(elem)
+            }
         }
     }
 
     pub fn insert(&mut self, index: usize, elem: T) {
         assert!(index <= self.len, "Insertion index is out of bounds!");
 
-        if self.len == self.cap {
-            self.grow();
+        if self.len == self.cap() {
+            self.buf.grow();
         }
 
         unsafe {
             if index < self.len {
                 ptr::copy(
-                    self.ptr.as_ptr().add(index),
-                    self.ptr.as_ptr().add(index + 1),
+                    self.ptr().add(index),
+                    self.ptr().add(index + 1),
                     self.len - index,
                 );
             }
-            ptr::write(self.ptr.as_ptr().add(index), elem);
+            ptr::write(self.ptr().add(index), elem);
 
             self.len += 1;
         }
@@ -116,34 +138,28 @@ impl<T> Vec<T> {
         unsafe {
             self.len -= 1;
 
-            let result = ptr::read(self.ptr.as_ptr().add(index));
+            let elem = ptr::read(self.ptr().add(index));
             ptr::copy(
-                self.ptr.as_ptr().add(index + 1),
-                self.ptr.as_ptr().add(index),
+                self.ptr().add(index + 1),
+                self.ptr().add(index),
                 self.len - index,
             );
 
-            result
+            elem
         }
     }
 
     fn into_iter(self) -> IntoIter<T> {
-        let ptr = self.ptr;
-        let cap = self.cap;
-        let len = self.len;
-
-        mem::forget(self);
-
         unsafe {
+            let buf = ptr::read(&self.buf);
+            let len = self.len;
+
+            mem::forget(self);
+
             IntoIter {
-                buf: ptr,
-                cap,
-                start: ptr.as_ptr() as *const _,
-                end: if cap == 0 {
-                    ptr.as_ptr() as *const _
-                } else {
-                    ptr.as_ptr().add(len)
-                },
+                start: buf.ptr.as_ptr(),
+                end: buf.ptr.as_ptr().add(len),
+                _buf: buf,
             }
         }
     }
@@ -158,21 +174,19 @@ impl<T> Default for Vec<T> {
 impl<T> Deref for Vec<T> {
     type Target = [T];
     fn deref(&self) -> &[T] {
-        unsafe { std::slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
+        unsafe { std::slice::from_raw_parts(self.ptr(), self.len) }
     }
 }
 
 impl<T> DerefMut for Vec<T> {
     fn deref_mut(&mut self) -> &mut [T] {
-        unsafe { std::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len) }
+        unsafe { std::slice::from_raw_parts_mut(self.ptr(), self.len) }
     }
 }
 
-impl<T> Drop for Vec<T> {
+impl<T> Drop for RawVec<T> {
     fn drop(&mut self) {
         if self.cap != 0 {
-            while self.pop().is_some() {}
-
             let elem_size = mem::size_of::<T>();
             let align = mem::align_of::<T>();
             let num_bytes = elem_size * self.cap;
@@ -186,21 +200,15 @@ impl<T> Drop for Vec<T> {
     }
 }
 
+impl<T> Drop for Vec<T> {
+    fn drop(&mut self) {
+        while self.pop().is_some() {}
+    }
+}
+
 impl<T> Drop for IntoIter<T> {
     fn drop(&mut self) {
-        if self.cap != 0 {
-            for _ in &mut *self {}
-
-            let elem_size = mem::size_of::<T>();
-            let align = mem::align_of::<T>();
-            let num_bytes = elem_size * self.cap;
-
-            unsafe {
-                let layout = Layout::from_size_align_unchecked(num_bytes, align);
-
-                dealloc(self.buf.as_ptr() as *mut _, layout)
-            }
-        }
+        for _ in &mut *self {}
     }
 }
 
