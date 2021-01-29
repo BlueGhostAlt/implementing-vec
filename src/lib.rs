@@ -12,26 +12,6 @@ struct RawVec<T> {
     cap: usize,
 }
 
-pub struct Vec<T> {
-    buf: RawVec<T>,
-    len: usize,
-}
-
-struct RawValIter<T> {
-    start: *const T,
-    end: *const T,
-}
-
-struct IntoIter<T> {
-    _buf: RawVec<T>,
-    iter: RawValIter<T>,
-}
-
-pub struct Drain<'a, T: 'a> {
-    vec: PhantomData<&'a mut Vec<T>>,
-    iter: RawValIter<T>,
-}
-
 impl<T> RawVec<T> {
     fn new() -> Self {
         let cap = if mem::size_of::<T>() == 0 {
@@ -76,6 +56,27 @@ impl<T> RawVec<T> {
             self.cap = new_cap;
         }
     }
+}
+
+impl<T> Drop for RawVec<T> {
+    fn drop(&mut self) {
+        let elem_size = mem::size_of::<T>();
+
+        if self.cap != 0 && elem_size != 0 {
+            let align = mem::align_of::<T>();
+            let num_bytes = elem_size * self.cap;
+
+            unsafe {
+                let layout = Layout::from_size_align_unchecked(num_bytes, align);
+                dealloc(self.ptr.as_ptr() as *mut _, layout);
+            }
+        }
+    }
+}
+
+pub struct Vec<T> {
+    buf: RawVec<T>,
+    len: usize,
 }
 
 impl<T> Vec<T> {
@@ -157,7 +158,7 @@ impl<T> Vec<T> {
         }
     }
 
-    fn into_iter(self) -> IntoIter<T> {
+    pub fn into_iter(self) -> IntoIter<T> {
         unsafe {
             let iter = RawValIter::new(&self);
 
@@ -182,21 +183,6 @@ impl<T> Vec<T> {
     }
 }
 
-impl<T> RawValIter<T> {
-    unsafe fn new(slice: &[T]) -> Self {
-        RawValIter {
-            start: slice.as_ptr(),
-            end: if mem::size_of::<T>() == 0 {
-                ((slice.as_ptr() as usize) + slice.len()) as *const _
-            } else if slice.is_empty() {
-                slice.as_ptr()
-            } else {
-                slice.as_ptr().add(slice.len())
-            },
-        }
-    }
-}
-
 impl<T> Default for Vec<T> {
     fn default() -> Self {
         Self::new()
@@ -216,37 +202,29 @@ impl<T> DerefMut for Vec<T> {
     }
 }
 
-impl<T> Drop for RawVec<T> {
-    fn drop(&mut self) {
-        let elem_size = mem::size_of::<T>();
-
-        if self.cap != 0 && elem_size != 0 {
-            let align = mem::align_of::<T>();
-            let num_bytes = elem_size * self.cap;
-
-            unsafe {
-                let layout = Layout::from_size_align_unchecked(num_bytes, align);
-                dealloc(self.ptr.as_ptr() as *mut _, layout);
-            }
-        }
-    }
-}
-
 impl<T> Drop for Vec<T> {
     fn drop(&mut self) {
         while self.pop().is_some() {}
     }
 }
 
-impl<T> Drop for IntoIter<T> {
-    fn drop(&mut self) {
-        for _ in &mut self.iter {}
-    }
+struct RawValIter<T> {
+    start: *const T,
+    end: *const T,
 }
 
-impl<'a, T> Drop for Drain<'a, T> {
-    fn drop(&mut self) {
-        for _ in &mut self.iter {}
+impl<T> RawValIter<T> {
+    unsafe fn new(slice: &[T]) -> Self {
+        RawValIter {
+            start: slice.as_ptr(),
+            end: if mem::size_of::<T>() == 0 {
+                ((slice.as_ptr() as usize) + slice.len()) as *const _
+            } else if slice.is_empty() {
+                slice.as_ptr()
+            } else {
+                slice.as_ptr().add(slice.len())
+            },
+        }
     }
 }
 
@@ -261,7 +239,7 @@ impl<T> Iterator for RawValIter<T> {
                 self.start = if mem::size_of::<T>() == 0 {
                     (self.start as usize + 1) as *const _
                 } else {
-                    self.start.offset(1);
+                    self.start.offset(1)
                 };
 
                 Some(result)
@@ -299,6 +277,17 @@ impl<T> DoubleEndedIterator for RawValIter<T> {
     }
 }
 
+pub struct IntoIter<T> {
+    _buf: RawVec<T>,
+    iter: RawValIter<T>,
+}
+
+impl<T> Drop for IntoIter<T> {
+    fn drop(&mut self) {
+        for _ in &mut self.iter {}
+    }
+}
+
 impl<T> Iterator for IntoIter<T> {
     type Item = T;
     fn next(&mut self) -> Option<T> {
@@ -313,6 +302,17 @@ impl<T> Iterator for IntoIter<T> {
 impl<T> DoubleEndedIterator for IntoIter<T> {
     fn next_back(&mut self) -> Option<T> {
         self.iter.next_back()
+    }
+}
+
+pub struct Drain<'a, T: 'a> {
+    vec: PhantomData<&'a mut Vec<T>>,
+    iter: RawValIter<T>,
+}
+
+impl<'a, T> Drop for Drain<'a, T> {
+    fn drop(&mut self) {
+        for _ in &mut self.iter {}
     }
 }
 
