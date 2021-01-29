@@ -34,17 +34,24 @@ pub struct Drain<'a, T: 'a> {
 
 impl<T> RawVec<T> {
     fn new() -> Self {
-        assert_ne!(mem::size_of::<T>(), 0, "Still not ready to handle ZSTs ):");
+        let cap = if mem::size_of::<T>() == 0 {
+            usize::MAX
+        } else {
+            0
+        };
 
         RawVec {
             ptr: Unique::dangling(),
-            cap: 0,
+            cap,
         }
     }
 
     fn grow(&mut self) {
         unsafe {
             let elem_size = mem::size_of::<T>();
+
+            assert_ne!(elem_size, 0, "The capacity has overflown!");
+
             let align = mem::align_of::<T>();
 
             let (new_cap, ptr) = if self.cap == 0 {
@@ -54,18 +61,9 @@ impl<T> RawVec<T> {
                 (1, ptr)
             } else {
                 let new_cap = self.cap * 2;
-                let old_num_bytes = self.cap * elem_size;
 
-                let layout = Layout::from_size_align_unchecked(old_num_bytes, align);
-
-                assert!(
-                    old_num_bytes <= (isize::MAX as usize) / 2,
-                    "The capacity has overflown!"
-                );
-
-                let new_num_bytes = old_num_bytes * 2;
-
-                let ptr = realloc(self.ptr.as_ptr() as *mut _, layout, new_num_bytes);
+                let layout = Layout::from_size_align_unchecked(self.cap * elem_size, align);
+                let ptr = realloc(self.ptr.as_ptr() as *mut _, layout, new_cap * elem_size);
 
                 (new_cap, ptr)
             };
@@ -188,7 +186,9 @@ impl<T> RawValIter<T> {
     unsafe fn new(slice: &[T]) -> Self {
         RawValIter {
             start: slice.as_ptr(),
-            end: if slice.len() == 0 {
+            end: if mem::size_of::<T>() == 0 {
+                ((slice.as_ptr() as usize) + slice.len()) as *const _
+            } else if slice.is_empty() {
                 slice.as_ptr()
             } else {
                 slice.as_ptr().add(slice.len())
@@ -218,14 +218,14 @@ impl<T> DerefMut for Vec<T> {
 
 impl<T> Drop for RawVec<T> {
     fn drop(&mut self) {
-        if self.cap != 0 {
-            let elem_size = mem::size_of::<T>();
+        let elem_size = mem::size_of::<T>();
+
+        if self.cap != 0 && elem_size != 0 {
             let align = mem::align_of::<T>();
             let num_bytes = elem_size * self.cap;
 
             unsafe {
                 let layout = Layout::from_size_align_unchecked(num_bytes, align);
-
                 dealloc(self.ptr.as_ptr() as *mut _, layout);
             }
         }
@@ -258,7 +258,11 @@ impl<T> Iterator for RawValIter<T> {
         } else {
             unsafe {
                 let result = ptr::read(self.start);
-                self.start = self.start.offset(1);
+                self.start = if mem::size_of::<T>() == 0 {
+                    (self.start as usize + 1) as *const _
+                } else {
+                    self.start.offset(1);
+                };
 
                 Some(result)
             }
@@ -266,7 +270,11 @@ impl<T> Iterator for RawValIter<T> {
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        let len = (self.end as usize - self.start as usize) / mem::size_of::<T>();
+        let elem_size = mem::size_of::<T>();
+        let elem_size = if elem_size == 0 { 1 } else { elem_size };
+        let size = self.end as usize - self.start as usize;
+
+        let len = size / elem_size;
 
         (len, Some(len))
     }
@@ -278,7 +286,11 @@ impl<T> DoubleEndedIterator for RawValIter<T> {
             None
         } else {
             unsafe {
-                self.end = self.end.offset(-1);
+                self.end = if mem::size_of::<T>() == 0 {
+                    (self.end as usize - 1) as *const _
+                } else {
+                    self.end.offset(-1)
+                };
                 let elem = ptr::read(self.end);
 
                 Some(elem)
